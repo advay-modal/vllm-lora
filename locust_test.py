@@ -56,6 +56,7 @@ class ModelUser(HttpUser):
         
         # Prepare the request payload
         payload = {
+            # "model": model, # need this when using loras
             "prompt": prompt,
             "max_tokens": 256
         }
