@@ -16,7 +16,8 @@ class ModelUser(HttpUser):
     
     # List of LoRA adapters to randomly choose from
     LORA_ADAPTERS = [
-        "Llama-3.1-8B"
+        "summaries-bf16"
+        # "Llama-3.1-8b-Unsloth-lora"
     ]
     
     # List of sample prompts to randomly choose from
@@ -56,9 +57,9 @@ class ModelUser(HttpUser):
         
         # Prepare the request payload
         payload = {
-            # "model": model, # need this when using loras
+            "model": model, # need this when using loras
             "prompt": prompt,
-            "max_tokens": 256
+            "max_tokens": 96
         }
         
         # Send the POST request to the endpoint
