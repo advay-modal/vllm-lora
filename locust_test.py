@@ -4,22 +4,23 @@
 # 3. Open http://localhost:8089 in your browser
 # 4. Set the number of users, spawn rate, and host URL (e.g., https://modal-labs-advay-dev--endpoint-test-model-generate.modal.run)
 # 5. Start the test and monitor results in real-time
-import time
-import random
-import json
 import csv
+import random
+import time
 from datetime import datetime
-from locust import HttpUser, task, between
+
+from locust import HttpUser, between, task
+
 
 class ModelUser(HttpUser):
     wait_time = between(1, 5)  # Wait between 1 and 5 seconds between tasks
-    
+
     # List of LoRA adapters to randomly choose from
     LORA_ADAPTERS = [
-        "summaries-bf16"
-        # "Llama-3.1-8b-Unsloth-lora"
+        "summaries-fp16",
+        # "summaries-bf16",
     ]
-    
+
     # List of sample prompts to randomly choose from
     SAMPLE_PROMPTS = [
         "What are the 3 laws of thermodynamics?",
@@ -36,42 +37,43 @@ class ModelUser(HttpUser):
         "Explain the anatomy of the human heart",
         "What is the Pythagorean theorem?",
         "How do vaccines work?",
-        "Describe the process of evolution"
+        "Describe the process of evolution",
     ]
-    
+
     def on_start(self):
         # Create CSV file with timestamp in filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.csv_filename = f"response_times_{timestamp}.csv"
-        
+        timestamp = datetime.now().strftime("%Y%m%d_%H")
+        self.csv_filename = f"response_times_simple_{timestamp}.csv"
+
         # Create and initialize the CSV file with headers
-        with open(self.csv_filename, 'w', newline='') as csvfile:
+        with open(self.csv_filename, "w", newline="") as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(['timestamp', 'model', 'prompt', 'status', 'response_time_s'])
-    
+            writer.writerow(["timestamp", "model", "prompt", "status", "response_time_s"])
+
     @task
     def generate_text(self):
         # Select a random prompt and LoRA adapter
         prompt = random.choice(self.SAMPLE_PROMPTS)
         model = random.choice(self.LORA_ADAPTERS)
-        
+        # model = "meta-llama/Llama-3.1-8B-Instruct"
+
         # Prepare the request payload
         payload = {
-            "model": model, # need this when using loras
+            "model": model,
             "prompt": prompt,
-            "max_tokens": 96
+            "max_tokens": 96,
         }
-        
+
         # Send the POST request to the endpoint
         start_time = time.time()
         with self.client.post("/", json=payload, catch_response=True) as response:
             response_time = time.time() - start_time
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
+
             # Record data in CSV
-            with open(self.csv_filename, 'a', newline='') as csvfile:
+            with open(self.csv_filename, "a", newline="") as csvfile:
                 writer = csv.writer(csvfile)
-                
+
                 if response.status_code == 200:
                     # Request was successful
                     status = "success"
@@ -82,7 +84,7 @@ class ModelUser(HttpUser):
                     status = f"failed_{response.status_code}"
                     response.failure(f"Request failed with status code {response.status_code}: {response.text}")
                     print(f"Failed - Model: {model}, Prompt: '{prompt[:30]}...', Status: {response.status_code}")
-                
+
                 # Write the data row
                 # Include response text in the CSV output (truncated to 50 chars)
                 response_text = response_data if status == "success" else ""

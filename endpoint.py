@@ -119,6 +119,9 @@ class vLLMLora:
                 gpu_memory_utilization=0.80,
                 enable_prefix_caching=True,
                 tensor_parallel_size=torch.cuda.device_count(),
+                compilation_config={
+                    'compile_sizes': [1, 2, 4, 8, 16, 32]
+                }
             )
         )
 
