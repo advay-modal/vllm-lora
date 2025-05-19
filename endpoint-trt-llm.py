@@ -292,7 +292,7 @@ def get_speculative_config():
 # The default is `1`, so we don't need to set it, but we are setting it explicitly
 # here in case you want to run this code with a different balance of latency and throughput.
 
-MAX_BATCH_SIZE = MAX_CONCURRENT_INPUTS = 1
+MAX_BATCH_SIZE = MAX_CONCURRENT_INPUTS = 1000
 
 
 def get_build_config():
