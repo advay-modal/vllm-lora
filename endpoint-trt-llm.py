@@ -199,6 +199,8 @@ class AsyncTRTLLMEngineService:
 
         self.cold_boot_s = time.monotonic() - modal_start_time
 
+        self.generate_impl("foo", {"temperature": 0.8, "top_p": 0.95})
+
     async def generate_impl(self, prompt: str, sampling_params_kwargs: dict) -> dict:
         assert "lookahead_config" not in sampling_params_kwargs
         sampling_params = SamplingParams(
