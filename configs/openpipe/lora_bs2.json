@@ -1,0 +1,36 @@
+{
+    "model_id": "NousResearch/Meta-Llama-3.1-8B-Instruct",
+    "dataset_path": "datasets/zed/large_sample.jsonl",
+    "engine_type": "trtllm",
+    "engine_kwargs": {
+        "build_config":  {
+            "plugin_config": {
+                "paged_kv_cache": true,
+                "use_paged_context_fmha": true,
+                "gemm_plugin": "auto"
+            },
+            "lora_config": {
+                "lora_dir": ["/loras/summaries-fp16"]
+            },
+            "max_input_len": 4096,
+            "max_num_tokens": 65536,
+            "max_seq_len": 8192, 
+            "max_batch_size": 2
+        },
+        "enable_lora": true,
+        "max_lora_rank": 64
+    },
+    "sampling_kwargs": {
+        "temperature": 0.01,
+        "max_tokens": 4096,
+        "skip_special_tokens": true
+    },
+    "infrastructure_kwargs": {
+        "gpu": "H100",
+        "max_containers": 1
+    },
+    "concurrency_kwargs": {
+        "max_inputs": 2
+    }
+}
+
