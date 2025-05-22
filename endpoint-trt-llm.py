@@ -27,7 +27,7 @@ volume = modal.Volume.from_name(f"{app_name}-new-volume", create_if_missing=True
 VOLUME_PATH = Path("/vol")
 MODELS_PATH = VOLUME_PATH / "models"
 
-MAX_INPUTS_PER_CONTAINER = 1
+MAX_INPUTS_PER_CONTAINER = 1000
 LOCAL_CONFIG_PATH = here / "configs" / "openpipe" / "default.json"
 REMOTE_CONFIG_PATH = "/default.json"
 
@@ -114,7 +114,7 @@ LORAS_PATH = Path("/loras")
         VOLUME_PATH: volume,
         LORAS_PATH: loras_volume,
     },
-    secrets=[modal.Secret.from_name("huggingface-secret")],
+    secrets=[modal.Secret.from_name("huggingface-secret", environment_name="main")],
 )
 @modal.concurrent(
     max_inputs=MAX_INPUTS_PER_CONTAINER
@@ -151,13 +151,7 @@ class AsyncTRTLLMEngineService:
         engine_kwargs = construct_configs(engine_kwargs)
 
         self.lookahead_config = engine_kwargs.get("speculative_config")
-        self.lora_request = None
-        if engine_kwargs.get("lora_config"):
-            self.lora_request = [
-                    LoRARequest(f"lora-{i}", i+1, a_lora_dir)
-                    for i, a_lora_dir in enumerate(engine_kwargs["lora_config"].lora_dir)
-            ]
-
+        self.lora_dirs = ["/loras/summaries-fp16", "/loras/summaries-bf16"]
         return config_hash, engine_kwargs
 
     def build_engine(self, engine_path, engine_kwargs) -> None:
@@ -202,7 +196,7 @@ class AsyncTRTLLMEngineService:
 
         self.cold_boot_s = time.monotonic() - modal_start_time
 
-    async def generate_impl(self, prompt: str, sampling_params_kwargs: dict) -> dict:
+    async def generate_impl(self, prompt: str, lora_index: int, sampling_params_kwargs: dict) -> dict:
         assert "lookahead_config" not in sampling_params_kwargs
         sampling_params = SamplingParams(
             **sampling_params_kwargs,
@@ -223,7 +217,7 @@ class AsyncTRTLLMEngineService:
 
         start_time = time.monotonic()
         output = await self.llm.generate_async(
-            text, sampling_params, lora_request=self.lora_request 
+            text, sampling_params, lora_request=LoRARequest(f"lora-{lora_index}", lora_index + 1, self.lora_dirs[lora_index]) 
         )
         llm_latency_ms = int(1000 * (time.monotonic() - start_time))
 
@@ -239,8 +233,8 @@ class AsyncTRTLLMEngineService:
         return results
 
     @modal.method()
-    async def xgenerate(self, prompt: str, sampling_params_kwargs: dict) -> dict:
-        return await self.generate_impl(prompt, sampling_params_kwargs)
+    async def xgenerate(self, prompt: str, lora_index: int, sampling_params_kwargs: dict) -> dict:
+        return await self.generate_impl(prompt, lora_index, sampling_params_kwargs)
 
     @modal.fastapi_endpoint(method="POST")
     async def generate(self, request: Request) -> str:
@@ -252,7 +246,7 @@ class AsyncTRTLLMEngineService:
 
         request_dict = await request.json()
         results = await self.generate_impl(
-            request_dict['prompt'], sampling_params_kwargs
+            request_dict['prompt'], request_dict["lora_index"], sampling_params_kwargs
         )
 
         output = results["outputs"][0]

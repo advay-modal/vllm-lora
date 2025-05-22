@@ -11,7 +11,7 @@
                 "gemm_plugin": "auto"
             },
             "lora_config": {
-                "lora_dir": ["/loras/summaries-fp16"]
+                "lora_dir": ["/loras/summaries-fp16", "/loras/summaries-bf16"]
             },
             "max_input_len": 4096,
             "max_num_tokens": 16384,

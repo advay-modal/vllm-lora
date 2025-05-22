@@ -18,7 +18,7 @@ class ModelUser(HttpUser):
     # List of LoRA adapters to randomly choose from
     LORA_ADAPTERS = [
         "summaries-fp16",
-        # "summaries-bf16",
+        "summaries-bf16",
     ]
 
     # List of sample prompts to randomly choose from
@@ -54,12 +54,12 @@ class ModelUser(HttpUser):
     def generate_text(self):
         # Select a random prompt and LoRA adapter
         prompt = random.choice(self.SAMPLE_PROMPTS)
-        model = random.choice(self.LORA_ADAPTERS)
+        model = random.randint(0, 1)
         # model = "meta-llama/Llama-3.1-8B-Instruct"
 
         # Prepare the request payload
         payload = {
-            "lora_name": model,
+            "lora_index": model,
             "prompt": prompt,
         }
 
