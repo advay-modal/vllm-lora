@@ -23,11 +23,13 @@ CLOUD = "oci"
 app_name = "openpipe-trtllm-latency-test"
 app = modal.App(app_name)
 
-volume = modal.Volume.from_name(f"{app_name}-volume", create_if_missing=True)
+volume = modal.Volume.from_name(f"{app_name}-new-volume", create_if_missing=True)
 VOLUME_PATH = Path("/vol")
 MODELS_PATH = VOLUME_PATH / "models"
-REMOTE_DEFAULT_CONFIG_PATH = "/default.json"
-REMOTE_BS4_CONFIG_PATH = "/bs4.json"
+
+MAX_INPUTS_PER_CONTAINER = 1
+LOCAL_CONFIG_PATH = here / "configs" / "openpipe" / "default.json"
+REMOTE_CONFIG_PATH = "/default.json"
 
 
 def get_system_prompt(model_id):
@@ -71,12 +73,8 @@ tensorrt_image = (
         }
     )
     .add_local_file(
-        here / "configs" / "openpipe" / "default.json",
-        REMOTE_DEFAULT_CONFIG_PATH
-    )
-    .add_local_file(
-        here / "configs" / "openpipe" / "bs4.json",
-        REMOTE_BS4_CONFIG_PATH
+        LOCAL_CONFIG_PATH,
+        REMOTE_CONFIG_PATH
     )
 )
 
@@ -101,6 +99,7 @@ with tensorrt_image.imports():
 loras_volume = modal.Volume.from_name("openpipe-loras", create_if_missing=True, environment_name="luis-dev")
 LORAS_PATH = Path("/loras")
 
+
 @app.cls(
     image=tensorrt_image,
     scaledown_window=20 * MINUTES,
@@ -116,6 +115,9 @@ LORAS_PATH = Path("/loras")
         LORAS_PATH: loras_volume,
     },
     secrets=[modal.Secret.from_name("huggingface-secret")],
+)
+@modal.concurrent(
+    max_inputs=MAX_INPUTS_PER_CONTAINER
 )
 class AsyncTRTLLMEngineService:
     def construct_engine_kwargs(self) -> dict:
@@ -134,6 +136,8 @@ class AsyncTRTLLMEngineService:
         }
 
         engine_kwargs = json.loads(self.engine_kwargs_string)
+        engine_kwargs["build_config"]["max_batch_size"] = MAX_INPUTS_PER_CONTAINER
+        engine_kwargs["tensor_parallel_size"] = torch.cuda.device_count()
         config_hash = hash_config_string(json.dumps(engine_kwargs, sort_keys=True))
 
         def construct_configs(x):
@@ -150,12 +154,9 @@ class AsyncTRTLLMEngineService:
         self.lora_request = None
         if engine_kwargs.get("lora_config"):
             self.lora_request = [
-                    LoRARequest(f"lora-{i}", i, a_lora_dir)
+                    LoRARequest(f"lora-{i}", i+1, a_lora_dir)
                     for i, a_lora_dir in enumerate(engine_kwargs["lora_config"].lora_dir)
             ]
-
-        engine_kwargs["tensor_parallel_size"] = torch.cuda.device_count()
-        print("number of GPUs:", engine_kwargs["tensor_parallel_size"])
 
         return config_hash, engine_kwargs
 
@@ -175,8 +176,8 @@ class AsyncTRTLLMEngineService:
 
         # self.model_id = "meta-llama/Llama-3.1-8B-Instruct"
         self.model_id = "NousResearch/Meta-Llama-3.1-8B-Instruct"
-        # self.engine_kwargs_string = Path(REMOTE_DEFAULT_CONFIG_PATH).read_text()
-        self.engine_kwargs_string = Path(REMOTE_BS4_CONFIG_PATH).read_text()
+        config = json.loads(Path(REMOTE_CONFIG_PATH).read_text())
+        self.engine_kwargs_string = json.dumps(config["engine_kwargs"])
         self.model_path = MODELS_PATH / self.model_id
 
         seed_everything()
@@ -197,9 +198,9 @@ class AsyncTRTLLMEngineService:
         print(f"loading engine from {engine_path}")
         self.llm = LLM(model=engine_path, **engine_kwargs)
 
-        self.cold_boot_s = time.monotonic() - modal_start_time
+        # self.llm.generate("test", 
 
-        self.generate_impl("foo", {"temperature": 0.8, "top_p": 0.95})
+        self.cold_boot_s = time.monotonic() - modal_start_time
 
     async def generate_impl(self, prompt: str, sampling_params_kwargs: dict) -> dict:
         assert "lookahead_config" not in sampling_params_kwargs
@@ -272,15 +273,14 @@ async def main(
     max_prompts: int = None,
     save_results_path: str = here / "outputs" / "results.jsonl",
 ):
-    config_path: str = here / "configs" / "openpipe" / REMOTE_BS4_CONFIG_PATH[1:]
+    config_path: str = LOCAL_CONFIG_PATH
+
     config = json.loads(Path(config_path).read_text())
     model_id = config["model_id"]
     dataset_path: str = config["dataset_path"]
     engine_type = config["engine_type"]
     engine_kwargs = config["engine_kwargs"]
     sampling_kwargs = config["sampling_kwargs"]
-    infrastructure_kwargs = config["infrastructure_kwargs"]
-    concurrency_kwargs = config["concurrency_kwargs"]
 
     experiment_id = generate_experiment_id()
     print(f"running experiment {experiment_id} with {model_id} and hyperparameters:")
@@ -288,25 +288,12 @@ async def main(
         engine_type,
         json.dumps(engine_kwargs, indent=4),
         json.dumps(sampling_kwargs, indent=4),
-        json.dumps(infrastructure_kwargs | concurrency_kwargs, indent=4),
+        json.dumps({}, indent=4),
     )
 
     print("building modal llm service class")
-    if engine_type == "trtllm":
-        engine_kwargs["tensor_parallel_size"] = get_gpu_count(
-            infrastructure_kwargs["gpu"]
-        )
-        model_class = (AsyncTRTLLMEngineService
-            .with_options(**infrastructure_kwargs)
-            .with_concurrency(**concurrency_kwargs)
-        )
-    else:
-        assert 0
-
-    engine_kwargs_string = json.dumps(
-        engine_kwargs
-    )  # *** AFTER tensor_parallel_size ***
-    model_service = model_class()
+    engine_kwargs_string = json.dumps(engine_kwargs)
+    model_service = AsyncTRTLLMEngineService()
 
     print("loading dataset... ", end="")
     prompts, oracle_outputs = load_dataset(
@@ -316,16 +303,6 @@ async def main(
         max_prompts,
     )
     print(f"with {len(prompts)} prompts")
-
-    num_cold_prompts = get_num_cold_prompts(
-        infrastructure_kwargs, concurrency_kwargs
-    )
-    print(f"warming up containers with {num_cold_prompts} cold prompts")
-    function_calls = [
-        model_service.xgenerate.spawn("warm", sampling_kwargs)
-        for _ in range(num_cold_prompts)
-    ]
-    modal.FunctionCall.gather(*function_calls)
 
     start_time = time.monotonic()
     print(f"spawning {len(prompts)} function calls")
@@ -341,8 +318,6 @@ async def main(
         result["engine_type"] = engine_type
         result["engine_kwargs"] = engine_kwargs
         result["sampling_kwargs"] = sampling_kwargs
-        result["infrastructure_config"] = infrastructure_kwargs
-        result["concurrency_kwargs"] = concurrency_kwargs
         result["experiment_id"] = experiment_id
         results.append(result)
     total_latency_s = time.monotonic() - start_time
@@ -355,7 +330,7 @@ async def main(
         engine_type,
         json.dumps(engine_kwargs, indent=4),
         json.dumps(sampling_kwargs, indent=4),
-        json.dumps(infrastructure_kwargs | concurrency_kwargs, indent=4),
+        json.dumps({}, indent=4),
     )
     latencies = [r["stats"]["llm_latency_ms"] for r in results]
     cold_boots_s = list(set([round(r["stats"]["cold_boot_s"], 2) for r in results]))

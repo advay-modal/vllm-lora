@@ -5,26 +5,25 @@
     "engine_kwargs": {
         "build_config":  {
             "plugin_config": {
+                "multiple_profiles": true,
                 "paged_kv_cache": true,
                 "use_paged_context_fmha": true,
                 "gemm_plugin": "auto"
             },
+            "lora_config": {
+                "lora_dir": ["/loras/summaries-fp16"]
+            },
             "max_input_len": 4096,
-            "max_num_tokens": 65536,
-            "max_seq_len": 8192, 
-            "max_batch_size": 1
-        }
+            "max_num_tokens": 16384,
+            "max_seq_len": 16384
+        },
+        "enable_lora": true,
+        "max_lora_rank": 64
     },
     "sampling_kwargs": {
-        "temperature": 0.01,
+        "temperature": 0.02,
         "max_tokens": 96,
         "skip_special_tokens": true
-    },
-    "infrastructure_kwargs": {
-        "gpu": "H100",
-        "max_containers": 1
-    },
-    "concurrency_kwargs": {
-        "max_inputs": 1
     }
 }
+
