@@ -18,7 +18,7 @@ class ModelUser(HttpUser):
     # List of LoRA adapters to randomly choose from
     LORA_ADAPTERS = [
         "summaries-fp16",
-        # "summaries-bf16",
+        "summaries-bf16",
     ]
 
     # List of sample prompts to randomly choose from
@@ -60,7 +60,7 @@ class ModelUser(HttpUser):
         # Prepare the request payload
         payload = {
             "model": model,
-            "prompt": prompt,
+            "prompt": "\nYou will be given a news article. Your task is to summarize the article in a concise manner. Your summary should be no more than 70 words.\n\nNews article:\nWASHINGTON (CNN) -- A pair of tornadoes struck suburban Washington on Sunday, mangling trees and stripping siding off several homes, the National Weather Service confirmed. No injuries were immediately reported. The first tornado hit St. Charles, Maryland -- about 30 miles south of Washington -- just after 2 p.m. It uprooted several trees, many of which fell onto cars and homes. The strongest wind from that touchdown was 80 mph -- enough force to blow out windows. A second tornado followed about 30 minutes later outside Hyattsville, Maryland -- about 10 miles northeast of the capital. The high-speed winds, peaking at 100 mph, hit the George E. Peters Adventist School especially hard, tearing off a portion of the roof and flinging it and mounds of debris into the parking lot. A nearby construction trailer was also knocked over. E-mail to a friend.\n\nSummary:\n",
             "max_tokens": 96,
         }
 

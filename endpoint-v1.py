@@ -5,20 +5,21 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 import modal
 
-lora_volume = modal.Volume.from_name("vllm-loras", create_if_missing=True, environment_name="advay-dev")
-models_volume = modal.Volume.from_name("models", create_if_missing=True, environment_name="advay-dev")
-loras_volume = modal.Volume.from_name("openpipe-loras", create_if_missing=True, environment_name="luis-dev")
+models_volume = modal.Volume.from_name("models", create_if_missing=True)
+loras_volume = modal.Volume.from_name("openpipe-loras", create_if_missing=True)
 vllm_cache = modal.Volume.from_name("vllm-cache", create_if_missing=True)
+
+# need to set "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY" annd "AWS_REGION" in the secret
+s3_access_credentials = modal.Secret.from_name("cloud-bucket-mount-secret", environment_name="main")
+s3_bucket_mount = modal.CloudBucketMount("modal-s3mount-test-bucket", secret = s3_access_credentials)
+
 
 MODELS_DIR = "/models/hub"
 LORAS_DIR = "/loras"
-
+S3_DIR = "/loras_s3"
 
 image = (
-    modal.Image.from_registry(
-        "nvidia/cuda:12.8.0-devel-ubuntu22.04",
-        add_python="3.13",
-    )
+    modal.Image.debian_slim(python_version="3.12")
     .pip_install("uv")
     .env(
         {
@@ -27,36 +28,21 @@ image = (
             "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "True",
             "VLLM_INSTALL_PUNICA_KERNELS": "1",
         }
-    )
+    )    
     .run_commands(
-        "uv pip install --system huggingface_hub[hf-xet] fastapi[standard]",
+        "uv pip install --system huggingface_hub[hf_transfer]==0.30.0",
+        "uv pip install --system vllm==0.8.5.post1",
+        "uv pip install --system flashinfer-python==0.2.2.post1 -i https://flashinfer.ai/whl/cu124/torch2.6",
     )
-    .run_commands("uv pip install --system torch==2.6.0")
-    .run_commands("uv pip install --system flashinfer-python -i https://flashinfer.ai/whl/cu126/torch2.6/")
-    .run_commands("uv pip install --system flash-attn --no-build-isolation")
-    .run_commands("uv pip install --system hf_transfer")
-    .apt_install("build-essential", "cmake", "clang")
-    .run_commands("uv pip install --system sentencepiece --no-build-isolation")
-    .apt_install("rustc", "cargo")
-    .apt_install("libomp-dev")
-    .run_commands("uv pip install --system xformers==0.0.29.post2 --no-build-isolation")
-    .run_commands(
-        "apt remove rustc cargo -y",
-        "apt install curl -y",
-        "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
-    )
-    .apt_install("python3-dev", "build-essential", "pkg-config", "libssl-dev")
-    .run_commands('export PATH="$HOME/.cargo/bin:$PATH" && uv pip install --system vllm==v0.8.5.post1')
     .env({"VLLM_CONFIGURE_LOGGING": "0", "TORCH_HOME": "/compile_cache"})
-    .entrypoint([])
 )
 
 app = modal.App("openpipe-lora-v1", image=image)
 
 with image.imports():
     import logging
-
-    import torch
+    import shutil
+    import os
     from fastapi import Request
     from vllm.engine.arg_utils import AsyncEngineArgs
     from vllm.engine.async_llm_engine import AsyncLLMEngine
@@ -77,21 +63,24 @@ with image.imports():
 
         async def resolve_lora(self, _base_model_name, lora_name) -> LoRARequest:
             lora_path = (Path(LORAS_DIR) / lora_name).as_posix()
+            s3_path = (Path(S3_DIR) / lora_name).as_posix()
+            if not os.path.exists(lora_path):
+                if not os.path.exists(s3_path):
+                    raise ValueError(f"LoRA {lora_name} not found in {LORAS_DIR} or {S3_DIR}")
+                # Copy from S3 to local volume if not present
+                shutil.copytree(s3_path, lora_path)
             lora_request = LoRARequest(lora_name=lora_name, lora_path=lora_path, lora_int_id=abs(hash(lora_name)))
             return lora_request
 
 
 @app.cls(
-    volumes={MODELS_DIR: models_volume, LORAS_DIR: loras_volume, "/compile_cache": vllm_cache},
+    volumes={MODELS_DIR: models_volume, LORAS_DIR: loras_volume, "/compile_cache": vllm_cache, S3_DIR: s3_bucket_mount},
     image=image,
     gpu="H100!",
     min_containers=1,
-    max_containers=1,
-    cpu=4,
-    memory=65_536,
+    buffer_containers=1, # keeps one container on standby in case load spikes
     scaledown_window=5 * 60,
     timeout=5 * 65,
-    region="us-chicago-1",
     secrets=[modal.Secret.from_name("huggingface-secret", environment_name="main")],
 )
 @modal.concurrent(max_inputs=1000)
@@ -103,10 +92,8 @@ class vLLMLora:
         engine = AsyncLLMEngine.from_engine_args(
             AsyncEngineArgs(
                 model=model,
-                # long_prefill_token_threshold=1024,
-                # max_long_partial_prefills=2,
                 enable_lora=True,
-                max_loras=100,
+                max_loras=4,
                 max_lora_rank=8,
             )
         )
